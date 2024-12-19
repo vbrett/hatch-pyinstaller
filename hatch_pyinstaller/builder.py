@@ -1,16 +1,21 @@
 import os
 import shutil
-import PyInstaller.__main__ as pyinstaller
+from zipfile import ZipFile
 from pathlib import Path
 from typing import Any, Callable
 from hatchling.builders.config import BuilderConfig
 from hatchling.builders.plugin.interface import BuilderInterface
-from hatchling.builders.utils import normalize_relative_path
+# from hatchling.builders.utils import normalize_relative_path
+# I removed relative path normalization, since all path options, including --paths, --add-data & --add-binaries can use absolute paths,
+# in which case splitting using ':' fails. Besides, pyinstaller seems very resilient on paths format.
+import PyInstaller.__main__ as pyinstaller
 
 
 class PyInstallerConfig(BuilderConfig):
     def pyinstaller_options(self) -> list[str]:
-        path_options_single = (
+        """ Extract & format pysintaller options from self.target_config
+        """
+        option_names = {
             "distpath",
             "workpath",
             "upx-dir",
@@ -22,8 +27,6 @@ class PyInstallerConfig(BuilderConfig):
             "splash",
             "upx-exclude",
             "runtime-tmpdir",
-        )
-        path_options_multi = (
             "add-data",
             "add-binary",
             "hidden-import",
@@ -36,8 +39,6 @@ class PyInstallerConfig(BuilderConfig):
             "additional-hooks-dir",
             "runtime-hook",
             "exclude-module",
-        )
-        other = (
             "debug",
             "optimize-level",
             "version-file",
@@ -45,40 +46,18 @@ class PyInstallerConfig(BuilderConfig):
             "osx-bundle-identifier",
             "codesign-identity",
             "osx-entitlements-file",
-        )
-        build_options = []
-        build_options.append("")
-        build_options.extend(self.target_config["flags"])
-        for option in self.target_config:
-            if option in path_options_single:
-                if option == "paths":
-                    paths = self.target_config[option].split(":")
-                    paths = [p for p in map(normalize_relative_path, paths)]
-                    build_options.extend(["--paths", ":".join(paths)])
-                else:
-                    build_options.extend(
-                        [
-                            f"--{option}",
-                            normalize_relative_path(self.target_config[option]),
-                        ]
-                    )
-            elif option in path_options_multi:
-                for value in self.target_config[option]:
-                    if option in ("add-data", "add-binary"):
-                        src, dst = value.split(":")
-                        value = f"{normalize_relative_path(src)}:{normalize_relative_path(dst)}"
-                        build_options.extend([f"--{option}", value])
-                    else:
-                        build_options.extend(
-                            [
-                                f"--{option}",
-                                normalize_relative_path(value),
-                            ]
-                        )
-            elif option in other:
-                build_options.extend([f"--{option}", self.target_config[option]])
-        return build_options
+        }
+        build_options = [""] # first element of the list will contain the scriptname and is filled in later on
+        build_options.extend(self.target_config["flags"]) # append options with no argument
+        # Append options with arguments
+        for option, values in self.target_config.items():
+            if option in option_names:
+                if not isinstance(values, list):
+                    values = [values]
 
+                for value in values:
+                    build_options.append(f'--{option}={value}')
+        return build_options
 
 class PyInstallerBuilder(BuilderInterface):
     PLUGIN_NAME = "pyinstaller"
@@ -90,19 +69,34 @@ class PyInstallerBuilder(BuilderInterface):
     def get_version_api(self) -> dict[str, Callable[..., Any]]:
         return {"app": self.build_app}
 
-    def build_app(self, directory: str, **build_data: Any) -> str:
+    def build_app(self, directory: str, **_build_data: Any) -> str:
         project_name = self.normalize_file_name_component(self.metadata.core.raw_name)
-        self.target_config["project_name"] = project_name
-        pyinstaller_options = self.config.pyinstaller_options()
 
-        if "scriptname" in self.target_config:
-            scriptname = self.target_config["scriptname"]
-            if isinstance(scriptname, list):
-                scriptnames = self.target_config["scriptname"]
-            else:
-                scriptnames = [scriptname]
-        else:
-            scriptnames = [f"{self.target_config['project_name']}.py"]
+        # extract list of script(s) to build
+        scriptnames = self.target_config.get("scriptname", f"{project_name}.py")
+        if not isinstance(scriptnames, list):
+            scriptnames = [scriptnames]
+
+        # if --distpath is not defined, force it to hatch's dist path
+        # instead of using pyinstaller default.
+        bundle_dist_path = self.target_config.get("distpath", directory)
+
+        # if --name is defined and multiple scripts are defined,
+        # display a warning and delete the field
+        if len(scriptnames) > 1 and "name" in self.target_config:
+            print("WARNING: setting '--name' pysintaller option is incompatible with having multiple elements in scriptname. Option is ignored")
+            self.target_config.pop("name")
+
+        create_zip = self.target_config.get("bundle-as-zip", False)
+
+        # Construct pyinstaller arguments - to do only once all coherency checks are done
+        pyinstaller_options = self.config.pyinstaller_options()
+        one_file = ("--onefile" in pyinstaller_options or "-F" in pyinstaller_options)
+
+        #TODO cannot support zipping --onedir app
+        if create_zip and not one_file:
+            print("WARNING: only support zipping --onefile app(s). Zipping is ignored")
+            create_zip = False
 
         for scriptname in scriptnames:
             pyinstaller_options[0] = scriptname
@@ -115,6 +109,22 @@ class PyInstallerBuilder(BuilderInterface):
             extra_files.append(self.metadata.core.readme_path)
         if self.metadata.core.license_files:
             extra_files.extend(self.metadata.core.license_files)
-        for f in extra_files:
-            shutil.copy2(f, dist_dir)
+
+        if not create_zip:
+            for f in extra_files:
+                shutil.copy2(f, dist_dir)
+        else:
+            # zip path & name are based on hatch infos, not pyinstaller's
+            zip_filename = Path(directory, project_name + '-' + self.metadata.version + '.bin.zip')
+            dist_dir = zip_filename
+            with ZipFile(zip_filename, 'w') as zf:
+                for scriptname in scriptnames:
+                    bundle_filename = self.target_config.get("name", Path(scriptname).stem) + ".exe"
+                    created_bundle = Path(bundle_dist_path, bundle_filename)
+                    zf.write(created_bundle)
+                    #TODO WHY IS IT KEEPING ALL created_bundle PATH ????
+
+                for f in extra_files:
+                    zf.write(f)
+
         return os.fspath(dist_dir)
