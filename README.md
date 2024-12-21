@@ -13,6 +13,17 @@ Add hatch-pyinstaller to your build dependencies, then add PyInstaller options t
 
 All valid PyInstaller options should be functional. You can only define 1 set of options that are applied on all built scripts (= values of `scriptname`). Options that do not take an argument are added to a flags list: `flags = ["--onedir", "--clean"]`. Options that take an argument have their own entry `log-level = "WARN"`. For options that can be used multiple times use a list of strings for the value: `collect-data = ["some_module", "some_other_module" ]`. For a full list of option, see https://pyinstaller.org/en/stable/usage.html#options.
 
+Zipping:  
+If you want all built script to be bundled in a single zip file, add `zip = true` in `[tool.hatch.build.targets.pyinstaller]`.  
+Zip file will be named following wheel & sdist naming convention:  
+`[package name]-[version].bin.zip`
+
+
+Compatibility warning:  
+`--name` option cannot be defined if several scripts are to be built.  
+`--distpath` option cannot be defined if built scripts are bundled in a zip file.  
+In one of these cases, a warning is displayed and the option value is ignored.
+
 ## Example
 
 Project directory:
@@ -49,6 +60,7 @@ require-runtime-dependencies = true
 flags = ["--clean", "--onedir"]
 collect-submodules = ["bar", "baz"]
 log-level = "WARN"
+zip = true
 ```
 build command:
 ```

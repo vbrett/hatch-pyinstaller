@@ -1,11 +1,14 @@
 import os
 import shutil
-import PyInstaller.__main__ as pyinstaller
+import zipfile
 from pathlib import Path
+import tempfile
+
 from typing import Any, Callable
 from hatchling.builders.config import BuilderConfig
 from hatchling.builders.plugin.interface import BuilderInterface
 from hatchling.builders.utils import normalize_relative_path
+import PyInstaller.__main__ as pyinstaller
 
 
 class PyInstallerConfig(BuilderConfig):
@@ -79,7 +82,6 @@ class PyInstallerConfig(BuilderConfig):
                 build_options.extend([f"--{option}", self.target_config[option]])
         return build_options
 
-
 class PyInstallerBuilder(BuilderInterface):
     PLUGIN_NAME = "pyinstaller"
 
@@ -90,31 +92,58 @@ class PyInstallerBuilder(BuilderInterface):
     def get_version_api(self) -> dict[str, Callable[..., Any]]:
         return {"app": self.build_app}
 
-    def build_app(self, directory: str, **build_data: Any) -> str:
+    def build_app(self, directory: str, **_build_data: Any) -> str:
         project_name = self.normalize_file_name_component(self.metadata.core.raw_name)
-        self.target_config["project_name"] = project_name
-        pyinstaller_options = self.config.pyinstaller_options()
 
-        if "scriptname" in self.target_config:
-            scriptname = self.target_config["scriptname"]
-            if isinstance(scriptname, list):
-                scriptnames = self.target_config["scriptname"]
-            else:
-                scriptnames = [scriptname]
+        # extract list of script(s) to build and ensure to have it as a list
+        scriptnames = self.target_config.get("scriptname", f"{project_name}.py")
+        if not isinstance(scriptnames, list):
+            scriptnames = [scriptnames]
+
+        # when zipping, use a temp directory as distpath
+        create_zip = self.target_config.get("zip", False)
+        if create_zip:
+            temp_dir = tempfile.TemporaryDirectory()
+            if "distpath" in self.target_config:
+            # --distpath option is not compatible with zipping bundles. Display a warning.
+                print("WARNING: '--distpath' option is incompatible with zipping bundles. Option is ignored.")
+            self.target_config["distpath"] = temp_dir.name
         else:
-            scriptnames = [f"{self.target_config['project_name']}.py"]
+            # if --distpath is not defined, force it to hatch's dist path instead of using pyinstaller default.
+            _dont_care = self.target_config.get("distpath", directory)
+
+        # --name option is not compatible with bundling multiple scripts. Display a warning and delete the field.
+        if len(scriptnames) > 1 and "name" in self.target_config:
+            print("WARNING: '--name' option is incompatible with bundling multiple scriptnames. Option is ignored.")
+            self.target_config.pop("name")
+
+        # Construct pyinstaller arguments - to do only once all coherency checks are done
+        pyinstaller_options = self.config.pyinstaller_options()
 
         for scriptname in scriptnames:
             pyinstaller_options[0] = scriptname
             pyinstaller.run(pyinstaller_options)
 
-        dist_dir = Path(directory, project_name)
         extra_files = []
-
         if self.metadata.core.readme_path:
             extra_files.append(self.metadata.core.readme_path)
         if self.metadata.core.license_files:
             extra_files.extend(self.metadata.core.license_files)
-        for f in extra_files:
-            shutil.copy2(f, dist_dir)
-        return os.fspath(dist_dir)
+
+        if not create_zip:
+            package_path = Path(directory, project_name)
+            for f in extra_files:
+                shutil.copy2(f, package_path)
+        else:
+            # zip is located in hatch dist, zip name mimics wheel & sdist naming rules
+            package_path = Path(directory, project_name + '-' + self.metadata.version + '.bin.zip')
+            with zipfile.ZipFile(package_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for root, _dirs, files in os.walk(Path(temp_dir.name), topdown = False):
+                    for name in files:
+                        zipped_file = Path(root, name)
+                        zf.write(zipped_file, zipped_file.relative_to(temp_dir.name))
+
+                for f in extra_files:
+                    zf.write(f, Path(f).name)
+
+        return os.fspath(package_path)

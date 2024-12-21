@@ -27,6 +27,9 @@ classifiers = [
     "Topic :: System :: Archiving :: Packaging",
 ]
 
+[project.optional-dependencies]
+test = ["humanize"]
+
 [project.urls]
 Homepage = "https://github.com/mxysptlk/hatch-pyinstaller"
 
