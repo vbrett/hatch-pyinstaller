@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling", "hatch-pyinstaller>=1.2.0.dev1"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+foo = "tst_package.foo:_foo"
+bar = "tst_package.bar:_bar"
+
+[tool.hatch.build.targets.pyinstaller]
+scriptname = ["src/tst_package/foo.py",
+              "src/tst_package/bar.py",
+             ]
+name="my app"
+add-data = ["data/Designer.png:."]
+flags = ["--onedir", "--noconfirm", "--clean",]
+# specpath = ".spec"
+require-runtime-dependencies = true
+zip = true
+
+
+[project]
+name = "tst-package"
+dynamic = ["version"]
+description = "Test package"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {file = "LICENSE"}
+keywords = []
+authors = [
+  { name="Vincent Brettnacher", email="vincent.brettnacher@veoneer.com" },
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[tool.hatch.version]
+path = "src/tst_package/__init__.py"
