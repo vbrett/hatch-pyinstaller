@@ -77,8 +77,7 @@ class PyInstallerBuilder(BuilderInterface):
 
         # dist dir can be hatch's dist path or pyinstaller option distpath.
         dist_dir = Path(self.target_config.get("distpath", directory))
-        dist_dir.mkdir(parents = True, exist_ok = True)
-        dist_dir /= project_name
+        dist_dir /= f"{project_name}-{self.metadata.version}.bin"
 
         # update <distpath> in function of zip option.
         # when zipping, use a temp directory
@@ -108,10 +107,12 @@ class PyInstallerBuilder(BuilderInterface):
 
         if not create_zip:
             for f in extra_files:
-                shutil.copy2(f, dist_dir.parent / f'{dist_dir.name}_{f}')
+                shutil.copy2(f, dist_dir / f)
         else:
             # zip is located in hatch dist, zip name mimics wheel & sdist naming rules
-            dist_dir = dist_dir.parent / f'{dist_dir.name}-{self.metadata.version}.bin.zip'
+            # Note: technically, dist_dir represents a zip file, not a directory
+            dist_dir = dist_dir.with_name(dist_dir.name + ".zip")
+            dist_dir.parent.mkdir(parents = True, exist_ok = True)      # ensure zip file directory exists as zipfile doesn't create it
             with zipfile.ZipFile(dist_dir, 'w', zipfile.ZIP_DEFLATED) as zf:
                 for root, _dirs, files in os.walk(Path(temp_dir.name), topdown = False):
                     for name in files:
