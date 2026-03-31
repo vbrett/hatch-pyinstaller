@@ -99,15 +99,21 @@ class PyInstallerBuilder(BuilderInterface):
             pyinstaller_options[0] = scriptname
             pyinstaller.run(pyinstaller_options)
 
-        extra_files = []
+        extra_files:list[Path] = []
         if self.metadata.core.readme_path:
-            extra_files.append(self.metadata.core.readme_path)
+            extra_files.append(Path(self.metadata.core.readme_path))
         if self.metadata.core.license_files:
-            extra_files.extend(self.metadata.core.license_files)
+            extra_files.extend(Path(f) for f in self.metadata.core.license_files)
+        if "extra-files" in self.target_config:
+            extra_files.extend(Path(f) for f in self.target_config["extra-files"])
 
         if not create_zip:
-            for f in extra_files:
-                shutil.copy2(f, dist_dir / f)
+            for p in extra_files:
+                if p.is_file():
+                    print(f"Adding extra file '{p}' to '{dist_dir}'")
+                    shutil.copy2(p, dist_dir / p.name)
+                else:
+                    print(f"WARNING: extra-file '{p}' is not a file or doesn't exist. It is ignored.")
         else:
             # zip is located in hatch dist, zip name mimics wheel & sdist naming rules
             # Note: technically, dist_dir represents a zip file, not a directory
@@ -119,7 +125,11 @@ class PyInstallerBuilder(BuilderInterface):
                         zipped_file = Path(root, name)
                         zf.write(zipped_file, zipped_file.relative_to(temp_dir.name))
 
-                for f in extra_files:
-                    zf.write(f, Path(f).name)
+                for p in extra_files:
+                    if p.is_file():
+                        print(f"Adding extra file '{p}' to zip")
+                        zf.write(p, p.name)
+                    else:
+                        print(f"WARNING: extra-file '{p}' is not a file or doesn't exist. It is ignored.")
 
         return os.fspath(dist_dir)
